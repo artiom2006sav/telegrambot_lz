@@ -7,12 +7,12 @@ from aiogram.fsm.state import State, StatesGroup
 from googletrans import Translator
 import pandas as pd
 from datetime import datetime
+from token_name import TOKEN
+from api_key import NEWS_API_KEY
 import os 
 import asyncio
 import requests
 
-TOKEN = "8457923329:AAFOSxGcDY4wqKiihUias__T99VscvAPvFk"
-NEWS_API_KEY = "018b1b70cbb24bedb5ba805080aa5e8d"
 
 session = AiohttpSession()
 session._connector_init = {'ssl': False}
