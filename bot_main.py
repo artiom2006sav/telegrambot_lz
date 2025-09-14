@@ -5,16 +5,21 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from googletrans import Translator
+import pandas as pd
+from datetime import datetime
+import os 
 import asyncio
 import requests
-API_KEY = "018b1b70cbb24bedb5ba805080aa5e8d"
+
 TOKEN = "8457923329:AAFOSxGcDY4wqKiihUias__T99VscvAPvFk"
+NEWS_API_KEY = "018b1b70cbb24bedb5ba805080aa5e8d"
+
 session = AiohttpSession()
 session._connector_init = {'ssl': False}
 bot = Bot(token=TOKEN, session=session)
-
 dp = Dispatcher()
 translator = Translator()
+
 news_topic = {
     "Технологии, IT, гаджеты, инновации": "technology",
     "Бизнес, экономика, финансы": "business",
@@ -24,64 +29,108 @@ news_topic = {
     "Здравоохранение, медицина, эпидемии": "health",
     "Спорт, соревнования, трансферы": "sports"
 }
-def get_news(category, page = 1):
-    news_url = "https://newsapi.org/v2/top-headlines"
-    news_params = {
+
+def get_news(category, page=1):
+    url = "https://newsapi.org/v2/top-headlines"
+    params = {
         "language": "en",
         "category": category,
-        "apiKey": API_KEY,
+        "apiKey": NEWS_API_KEY,
         "page": page
     }
-    news_response = requests.get(news_url,params = news_params)
-    news_data = news_response.json()
-    news_articles = news_data.get('articles',[])
-    return news_articles[:5] if news_articles else []
-async def send_news(category : str, message : types.Message,state :FSMContext):
-    await message.answer("Ищу новости по вашей категории...")
-    news_articles = get_news(category)
-    if not news_articles:
-        await message.answer("Новости не найденыю Попробуйте позже...")
-    else:
-        await state.update_data(category = category)
-        for n in news_articles:
-            news_title = n.get("title","")
-            news_description = n.get("description","")
-            news_url = n.get("url","")
-            translate_news_title = translator.translate(news_title,dest='ru').text
-            translate_description = translator.translate(news_description,dest ="ru").text
-            text = f"{translate_news_title}\n\n{translate_description}\n{news_url}"
-def get_curs(base="USD", target="EUR"):
-    url = f"https://api.frankfurter.app/latest?from={base}&to={target}"
-    response = requests.get(url)
+    response = requests.get(url, params=params)
     data = response.json()
-    rate = data["rates"][target]
-    print(f"Курс {base} к {target}: {rate}")
-def get_weather(city="Minsk"):
-    url = f"https://wttr.in/{city}?format=j1"
-    response = requests.get(url)
-    data = response.json()
-    current = data["current_condition"][0]
-    temp = current["temp_C"]
-    desc = current["weatherDesc"][0]["value"]
-    print(f"Погода в {city}: {temp}°C, {desc}")
+    return data.get("articles", [])[:5]
 
+async def send_news(category: str, message: types.Message, state: FSMContext):
+    await message.answer("Ищу новости по вашей категории...")
+    articles = get_news(category)
+
+    if not articles:
+        await message.answer("Новости не найдены. Попробуйте позже.")
+        return
+
+    await state.update_data(category=category)
+
+    for article in articles:
+        try:
+            title = article.get("title", "")
+            description = article.get("description", "")
+            url = article.get("url", "")
+
+            translated_title = translator.translate(title, dest='ru').text if title else "Без заголовка"
+            translated_description = translator.translate(description, dest='ru').text if description else "Описание отсутствует"
+
+            text = f"{translated_title}\n\n{translated_description}\n{url}"
+            await message.answer(text)
+        except Exception as e:
+            print(f"Ошибка при обработке новости: {e}")
+            await message.answer("Ошибка при получении одной из новостей.")
+
+def get_curs():
+    try:
+        url = "https://www.nbrb.by/api/exrates/rates/USD?parammode=2"
+        response = requests.get(url)
+        data = response.json()
+
+        rate = data.get("Cur_OfficialRate")
+        if rate:
+            return f"Официальный курс USD к BYN: {rate:.4f}"
+        else:
+            return "Не удалось получить курс USD к BYN."
+
+    except Exception as e:
+        print(f"Ошибка при получении курса: {e}")
+        return "Произошла ошибка при получении курса валют."
+
+def get_weather(city="Minsk"):
+    try:
+        url = f"https://wttr.in/{city}?format=j1"
+        response = requests.get(url)
+        data = response.json()
+        current = data["current_condition"][0]
+        temp = current["temp_C"]
+        desc = current["weatherDesc"][0]["value"]
+        return f"Погода в {city.title()}: {temp}°C, {desc}"
+    except Exception as e:
+        print(f"Ошибка при получении погоды: {e}")
+        return "Не удалось получить прогноз погоды."
+def user_log(user_id, user_name, user_motion, api_name,api_answer):
+    now = datetime.now()
+    date_now = now.strftime("%Y-%m-%d")
+    time_now = now.strftime("%H:%M:%S")
+    log_file = "bot_log.csv"
+    new_row = {
+        "Unic_id" : user_id,
+        "@TG_nik" : f"@{user_name}",
+        "Motion" : user_motion,
+        "API" : api_name,
+        "Date" : date_now,
+        "Time" : time_now, 
+        "API_answer" : api_answer
+    }
+    df = pd.read_csv(log_file)
+    df = pd.concat([df,pd.DataFrame([new_row])],ignore_index=True)
+    df.to_csv(log_file, index = False)
 
 class Form(StatesGroup):
     user_input = State()
     user_choise = State()
     news_category = State()
-@dp.message(Command('start'))
-async def start_function(message : types.Message, state : FSMContext):
+
+@dp.message(Command("start"))
+async def start_function(message: types.Message, state: FSMContext):
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text = "Новости по всему миру")],
-            [KeyboardButton(text = "Прогноз погоды")], 
-            [KeyboardButton(text = "Курс валют")]
+            [KeyboardButton(text="Новости по всему миру")],
+            [KeyboardButton(text="Прогноз погоды")],
+            [KeyboardButton(text="Курс валют")]
         ],
         resize_keyboard=True
     )
-    await message.answer("Привет, я UniversalBot! Что желаешь посмотреть?",reply_markup=keyboard)
+    await message.answer("Привет, я UniversalBot! Что желаешь посмотреть?", reply_markup=keyboard)
     await state.set_state(Form.user_choise)
+
 @dp.message(Form.user_choise)
 async def first_user_choise(message: types.Message, state: FSMContext):
     user_text = message.text.lower()
@@ -109,11 +158,15 @@ async def first_user_choise(message: types.Message, state: FSMContext):
         )
         await message.answer("Выберите город для прогноза погоды", reply_markup=keyboard)
         await state.set_state(Form.user_input)
+
     elif user_text == "курс валют":
-        curs = get_curs("USD","BYN")
-        await message.answer(f"Курс USD в BYN: {curs}")
+        result = get_curs()
+        await message.answer(result)
+        user_log(message.from_user.id, message.from_user.username,"Курс валют", "wttr.in",result)
+
     else:
         await message.answer(f"Вы написали <<{user_text}>>, я не знаю такой команды")
+
 @dp.message(Form.news_category)
 async def news_category(message: types.Message, state: FSMContext):
     text = message.text.strip()
@@ -125,8 +178,11 @@ async def news_category(message: types.Message, state: FSMContext):
     category = news_topic.get(text)
     if category:
         await send_news(category, message, state)
+        user_log(message.from_user.id, message.from_user.username, "Новости по всему миру", "newsapi.org", text)
+
     else:
-        await message.answer("Не удалось определить категорию. Попробуйте позже...")
+        await message.answer("Не удалось определить категорию. Попробуйте позже.")
+
 @dp.message(Form.user_input)
 async def weather_city(message: types.Message, state: FSMContext):
     city = message.text.lower()
@@ -134,8 +190,9 @@ async def weather_city(message: types.Message, state: FSMContext):
         await start_function(message, state)
         return
 
-    weather = get_weather(city)
-    await message.answer(weather)
+    await message.answer(get_weather(city))
+    user_log(message.from_user.id, message.from_user.username,"Прогноз погоды", "wttr.in",get_weather(city))
+
 async def main():
     await dp.start_polling(bot)
 
